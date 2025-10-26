@@ -1,0 +1,34 @@
+
+{
+  "name": "file-tree-explorer",
+  "version": "1.0.0",
+  "description": "A modern, interactive file tree explorer using the File System Access API",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "python -m http.server 8000",
+    "deploy": "gh-pages -d ."
+  },
+  "keywords": [
+    "file-explorer",
+    "file-system-access-api",
+    "react",
+    "vanilla-js",
+    "file-manager",
+    "directory-tree"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "[https://github.com/your-username/file-tree-explorer.git](https://github.com/your-username/file-tree-explorer.git)"
+  },
+  "bugs": {
+    "url": "[https://github.com/your-username/file-tree-explorer/issues](https://github.com/your-username/file-tree-explorer/issues)"
+  },
+  "homepage": "[https://your-username.github.io/file-tree-explorer](https://your-username.github.io/file-tree-explorer)",
+  "devDependencies": {
+    "gh-pages": "^6.0.0",
+    "serve": "^14.2.1"
+  }
+}
