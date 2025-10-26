@@ -109,7 +109,7 @@ const validateFileName = (name) => {
 
 const TreeContext = createContext();
 
-const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename, editingNodeId, setEditingNodeId }) => {
+const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename, editingNodeId, setEditingNodeId, moveToTrash, restoreFromTrash }) => {
   const { openNodes, toggleNode } = useContext(TreeContext);
   const [showActions, setShowActions] = useState(false);
   const [isEditing, setIsEditing] = useState(editingNodeId === node.id);
@@ -117,6 +117,10 @@ const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename,
   const isOpen = openNodes[node.id] || false;
   const hasChildren = node.children && node.children.length > 0;
   const isFolder = node.children !== undefined;
+  
+  // Check if this item is inside the .trash folder
+  const isInTrash = node.id.includes('/.trash/') && node.name !== '.trash';
+  const isTrashFolder = node.name === '.trash';
 
   // Handle when this node should enter edit mode
   useEffect(() => {
@@ -133,6 +137,10 @@ const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename,
   };
 
   const handleDoubleClick = () => {
+    // Prevent renaming .trash folder
+    if (node.name === '.trash') {
+      return;
+    }
     setIsEditing(true);
     setEditName(node.name);
   };
@@ -184,7 +192,9 @@ const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename,
         )
       ),
       isFolder 
-        ? React.createElement(Icons.Folder, { className: "icon icon-folder" })
+        ? (node.name === '.trash' 
+            ? React.createElement(Icons.Trash2, { className: "icon icon-trash-folder" })
+            : React.createElement(Icons.Folder, { className: "icon icon-folder" }))
         : React.createElement(Icons.File, { className: "icon icon-file" }),
       isEditing 
         ? React.createElement("input", {
@@ -202,38 +212,68 @@ const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename,
             className: "node-name", 
             onDoubleClick: handleDoubleClick 
           }, node.name),
-      showActions && React.createElement("div", { className: "actions" },
-        isFolder && [
+      showActions && !isTrashFolder && React.createElement("div", { className: "actions" },
+        isInTrash ? [
+          // Buttons for items inside .trash folder
           React.createElement("button", {
-            key: "folder",
+            key: "restore",
             onClick: async () => {
               try {
-                await onAddFolder(node.id);
+                await restoreFromTrash(node.id, node);
               } catch (error) {
-                console.error('Failed to add folder:', error);
+                console.error('Failed to restore:', error);
               }
             },
-            className: "action-btn folder-action",
-            title: "Add folder"
-          }, React.createElement(Icons.FolderPlus, { className: "icon-small icon-blue-dark" })),
+            className: "action-btn restore-action",
+            title: "Restore from trash"
+          }, React.createElement(Icons.Upload, { className: "icon-small icon-green" })),
           React.createElement("button", {
-            key: "file",
-            onClick: async () => {
-              try {
-                await onAddFile(node.id);
-              } catch (error) {
-                console.error('Failed to add file:', error);
-              }
-            },
-            className: "action-btn file-action",
-            title: "Add file"
-          }, React.createElement(Icons.FilePlus, { className: "icon-small icon-green" }))
-        ],
-        React.createElement("button", {
-          onClick: () => onDelete(node.id),
-          className: "action-btn delete-action",
-          title: "Delete"
-        }, React.createElement(Icons.Trash2, { className: "icon-small icon-red" }))
+            key: "permanent-delete",
+            onClick: () => onDelete(node.id),
+            className: "action-btn delete-action",
+            title: "Permanent delete"
+          }, React.createElement(Icons.Trash2, { className: "icon-small icon-red" }))
+        ] : [
+          // Normal buttons for regular items
+          ...(isFolder ? [
+            React.createElement("button", {
+              key: "folder",
+              onClick: async () => {
+                try {
+                  await onAddFolder(node.id);
+                } catch (error) {
+                  console.error('Failed to add folder:', error);
+                }
+              },
+              className: "action-btn folder-action",
+              title: "Add folder"
+            }, React.createElement(Icons.FolderPlus, { className: "icon-small icon-blue-dark" })),
+            React.createElement("button", {
+              key: "file",
+              onClick: async () => {
+                try {
+                  await onAddFile(node.id);
+                } catch (error) {
+                  console.error('Failed to add file:', error);
+                }
+              },
+              className: "action-btn file-action",
+              title: "Add file"
+            }, React.createElement(Icons.FilePlus, { className: "icon-small icon-green" }))
+          ] : []),
+          React.createElement("button", {
+            key: "move-to-trash",
+            onClick: () => moveToTrash(node.id),
+            className: "action-btn trash-action",
+            title: "Move to trash"
+          }, React.createElement(Icons.Trash2, { className: "icon-small icon-red" })),
+          // React.createElement("button", {
+          //   key: "permanent-delete",
+          //   onClick: () => onDelete(node.id),
+          //   className: "action-btn delete-action",
+          //   title: "Permanent delete"
+          // }, React.createElement(Icons.Trash2, { className: "icon-small icon-red" }))
+        ]
       )
     ),
     hasChildren && isOpen && React.createElement("div", null,
@@ -247,7 +287,9 @@ const TreeNode = ({ node, level = 0, onDelete, onAddFolder, onAddFile, onRename,
           onAddFile: onAddFile,
           onRename: onRename,
           editingNodeId: editingNodeId,
-          setEditingNodeId: setEditingNodeId
+          setEditingNodeId: setEditingNodeId,
+          moveToTrash: moveToTrash,
+          restoreFromTrash: restoreFromTrash
         })
       )
     )
@@ -282,6 +324,256 @@ const TreeView = () => {
     setOpenNodes(prev => ({ ...prev, [nodeId]: !prev[nodeId] }));
   };
 
+
+  // Helper function to log trash item metadata
+  const logTrashItem = async (trashItem) => {
+    try {
+      const trashHandle = await rootDirectoryHandle.getDirectoryHandle('.trash');
+      let trashInfo = { items: [] };
+      
+      // Try to read existing trash-info.json
+      try {
+        const infoFileHandle = await trashHandle.getFileHandle('trash-info.json');
+        const file = await infoFileHandle.getFile();
+        const content = await file.text();
+        trashInfo = JSON.parse(content);
+      } catch (error) {
+        // File doesn't exist, use empty structure
+      }
+      
+      // Add new item
+      trashInfo.items.push({
+        id: Date.now() + Math.random(),
+        ...trashItem
+      });
+      
+      // Write back to file
+      const infoFileHandle = await trashHandle.getFileHandle('trash-info.json', { create: true });
+      const writable = await infoFileHandle.createWritable();
+      await writable.write(JSON.stringify(trashInfo, null, 2));
+      await writable.close();
+    } catch (error) {
+      console.warn('Failed to log trash item:', error);
+    }
+  };
+
+  const moveRealNodeToTrash = async (nodeId) => {
+    // Find parent directory and item name
+    const pathParts = nodeId.split('/');
+    const itemName = pathParts[pathParts.length - 1];
+    const parentPath = pathParts.slice(0, -1).join('/');
+    
+    const parentHandle = directoryHandles.get(parentPath);
+    if (!parentHandle) {
+      throw new Error('Parent directory not found');
+    }
+
+    // Create .trash folder if it doesn't exist
+    const trashHandle = await rootDirectoryHandle.getDirectoryHandle('.trash', { create: true });
+    
+    // Get the item to move
+    const itemHandle = await parentHandle.getFileHandle(itemName).catch(async () => {
+      return await parentHandle.getDirectoryHandle(itemName);
+    });
+    
+    // Generate unique name in trash (in case of duplicates)
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const trashName = `${itemName}_${timestamp}`;
+    
+    if (itemHandle.kind === 'file') {
+      // Move file to trash
+      const file = await itemHandle.getFile();
+      const trashFileHandle = await trashHandle.getFileHandle(trashName, { create: true });
+      const writable = await trashFileHandle.createWritable();
+      await writable.write(file);
+      await writable.close();
+    } else {
+      // Move directory to trash (recursive copy)
+      const trashDirHandle = await trashHandle.getDirectoryHandle(trashName, { create: true });
+      await copyDirectoryContents(itemHandle, trashDirHandle);
+    }
+    
+    // Log metadata for restore functionality
+    await logTrashItem({
+      trashFileName: trashName,
+      originalName: itemName,
+      originalPath: nodeId,
+      deletedAt: new Date().toISOString(),
+      type: itemHandle.kind
+    });
+    
+    // Remove original after successful move to trash
+    await parentHandle.removeEntry(itemName, { recursive: true });
+    
+    // Remove from directory handles if it was a directory
+    if (directoryHandles.has(nodeId)) {
+      const newHandleMap = new Map(directoryHandles);
+      newHandleMap.delete(nodeId);
+      setDirectoryHandles(newHandleMap);
+    }
+
+    // Refresh the entire tree to show updated .trash folder contents
+    await refreshTreeStructure();
+  };
+
+  // Helper function to generate unique name for conflicts (macOS style)
+  const getMacOSStyleName = async (parentHandle, originalName) => {
+    try {
+      // Check if original name exists
+      await parentHandle.getFileHandle(originalName).catch(async () => {
+        return await parentHandle.getDirectoryHandle(originalName);
+      });
+      
+      // Name exists, use _restored<num> format: "file_restored2.txt", "file_restored3.txt"
+      const nameParts = originalName.split('.');
+      const extension = nameParts.length > 1 ? '.' + nameParts.pop() : '';
+      const baseName = nameParts.join('.');
+      
+      let counter = 2;
+      let newName = `${baseName}_restored${counter}${extension}`;
+      
+      // Keep trying with incremental numbers
+      while (true) {
+        try {
+          await parentHandle.getFileHandle(newName).catch(async () => {
+            return await parentHandle.getDirectoryHandle(newName);
+          });
+          // Name exists, try next number
+          counter++;
+          newName = `${baseName}_restored${counter}${extension}`;
+        } catch (error) {
+          // Name doesn't exist, we can use it
+          break;
+        }
+      }
+      
+      return newName;
+    } catch (error) {
+      // Original name doesn't exist, can use it
+      return originalName;
+    }
+  };
+
+  // Helper function to validate parent directory exists (macOS style - strict)
+  const validateParentExists = async (fullPath) => {
+    const pathParts = fullPath.split('/');
+    let currentHandle = rootDirectoryHandle;
+    
+    // Check each directory in the path exists (don't create)
+    for (let i = 1; i < pathParts.length - 1; i++) {
+      const dirName = pathParts[i];
+      try {
+        currentHandle = await currentHandle.getDirectoryHandle(dirName);
+      } catch (error) {
+        // Directory doesn't exist - fail like macOS
+        throw new Error(`The item can't be put back because the original folder "${pathParts.slice(0, i + 1).join('/')}" no longer exists.`);
+      }
+    }
+    
+    return currentHandle;
+  };
+
+  // Restore function
+  const restoreFromTrash = async (trashNodeId, node = null) => {
+    try {
+      const trashHandle = await rootDirectoryHandle.getDirectoryHandle('.trash');
+      
+      // Read trash metadata
+      const infoFileHandle = await trashHandle.getFileHandle('trash-info.json');
+      const file = await infoFileHandle.getFile();
+      const trashInfo = JSON.parse(await file.text());
+      
+      // Find the item in metadata by matching the trash file name
+      // Use originalName from node if available, otherwise extract from ID
+      const trashFileName = node && node.originalName ? node.originalName : trashNodeId.split('/').pop();
+      const itemInfo = trashInfo.items.find(item => item.trashFileName === trashFileName);
+      
+      if (!itemInfo) {
+        throw new Error('Item not found in trash metadata');
+      }
+      
+      // Validate parent directory exists (macOS style - fail if missing)
+      const parentHandle = await validateParentExists(itemInfo.originalPath);
+      
+      // Get unique name using macOS-style numbering
+      const restoredName = await getMacOSStyleName(parentHandle, itemInfo.originalName);
+      
+      // Get the trash item handle
+      const trashItemHandle = await trashHandle.getFileHandle(trashFileName).catch(async () => {
+        return await trashHandle.getDirectoryHandle(trashFileName);
+      });
+      
+      if (trashItemHandle.kind === 'file') {
+        // Restore file
+        const file = await trashItemHandle.getFile();
+        const restoredFileHandle = await parentHandle.getFileHandle(restoredName, { create: true });
+        const writable = await restoredFileHandle.createWritable();
+        await writable.write(file);
+        await writable.close();
+      } else {
+        // Restore directory
+        const restoredDirHandle = await parentHandle.getDirectoryHandle(restoredName, { create: true });
+        await copyDirectoryContents(trashItemHandle, restoredDirHandle);
+      }
+      
+      // Remove from trash
+      await trashHandle.removeEntry(trashFileName, { recursive: true });
+      
+      // Update metadata - remove the restored item
+      trashInfo.items = trashInfo.items.filter(item => item.trashFileName !== trashFileName);
+      const writable = await infoFileHandle.createWritable();
+      await writable.write(JSON.stringify(trashInfo, null, 2));
+      await writable.close();
+      
+      // Refresh tree to show restored item
+      await refreshTreeStructure();
+      
+      addNotification(`Restored "${itemInfo.originalName}" as "${restoredName}"`, 'success');
+      
+    } catch (error) {
+      console.error('Error restoring from trash:', error);
+      
+      // Check if it's a missing parent folder error
+      if (error.message.includes("original folder") && error.message.includes("no longer exists")) {
+        // Extract the missing path from the error message
+        const pathMatch = error.message.match(/"([^"]+)"/); 
+        const missingPath = pathMatch ? pathMatch[1] : 'the original folder';
+        
+        addNotification(
+          `Cannot restore: Missing folder "${missingPath}". Create this folder first or restore its parent folder from trash.`, 
+          'error'
+        );
+      } else {
+        addNotification(`Failed to restore: ${error.message}`, 'error');
+      }
+      
+      throw error;
+    }
+  };
+
+  const moveToTrash = async (nodeId) => {
+    // Get item name for status message
+    const pathParts = nodeId.split('/');
+    const itemName = pathParts[pathParts.length - 1];
+    
+    setOperationLoading(`trash-${nodeId}`);
+    
+    try {
+      // Check if we have real directory handles
+      if (directoryHandles.size > 0) {
+        await moveRealNodeToTrash(nodeId);
+        addNotification(`Moved "${itemName}" to trash`, 'success');
+      } else {
+        deleteVirtualNode(nodeId);
+        addNotification(`Moved "${itemName}" to trash`, 'success');
+      }
+    } catch (error) {
+      console.error('Error moving to trash:', error);
+      addNotification(`Failed to move to trash: ${error.message}`, 'error');
+    } finally {
+      setOperationLoading(null);
+    }
+  };
 
   const deleteNode = async (nodeId) => {
     const confirmed = confirm('Are you sure you want to delete this item? This will permanently delete the actual file/folder.');
@@ -782,6 +1074,13 @@ const TreeView = () => {
           return;
         }
         
+        // Create .trash folder if it doesn't exist
+        try {
+          await dirHandle.getDirectoryHandle('.trash', { create: true });
+        } catch (error) {
+          console.warn('Could not create .trash folder:', error);
+        }
+        
         const handleMap = new Map();
         const treeStructure = await buildTreeFromDirectory(dirHandle, dirHandle.name, handleMap);
         // Show children directly instead of the parent directory
@@ -811,13 +1110,43 @@ const TreeView = () => {
     // Store directory handle for this path
     handleMap.set(currentPath, dirHandle);
     
+    // Check if we're processing the .trash folder to load metadata
+    let trashInfo = null;
+    if (dirHandle.name === '.trash' || currentPath.endsWith('/.trash')) {
+      try {
+        const infoFileHandle = await dirHandle.getFileHandle('trash-info.json');
+        const file = await infoFileHandle.getFile();
+        const content = await file.text();
+        trashInfo = JSON.parse(content);
+      } catch (error) {
+        // No trash info file, continue normally
+      }
+    }
+    
     for await (const [name, handle] of dirHandle.entries()) {
-      // Skip hidden files and directories starting with .
-      if (name.startsWith('.')) {
+      // Skip hidden files except .trash folder
+      if (name.startsWith('.') && name !== '.trash') {
+        continue;
+      }
+      
+      // Skip trash-info.json file
+      if (name === 'trash-info.json') {
         continue;
       }
       
       const id = `${currentPath}/${name}`;
+      let displayName = name;
+      
+      // If we're in trash folder and have metadata, use original path
+      if (trashInfo && trashInfo.items) {
+        const trashItem = trashInfo.items.find(item => item.trashFileName === name);
+        if (trashItem) {
+          // Extract path without the root folder name
+          const pathParts = trashItem.originalPath.split('/');
+          // Remove the first part (root folder name) and join the rest
+          displayName = pathParts.slice(2).join('/') || trashItem.originalName;
+        }
+      }
       
       if (handle.kind === 'directory') {
         // Store subdirectory handle
@@ -826,17 +1155,26 @@ const TreeView = () => {
         const subChildren = await buildTreeFromDirectory(handle, id, handleMap);
         children.push({
           id,
-          name,
+          name: displayName,
+          originalName: name, // Keep original for operations
           children: subChildren.children || []
         });
       } else {
         // File
         children.push({
           id,
-          name
+          name: displayName,
+          originalName: name // Keep original for operations
         });
       }
     }
+    
+    // Sort children: .trash folder always at bottom, then alphabetical
+    children.sort((a, b) => {
+      if (a.name === '.trash') return 1;  // .trash goes to end
+      if (b.name === '.trash') return -1; // .trash goes to end
+      return a.name.localeCompare(b.name); // alphabetical for others
+    });
     
     return {
       id: currentPath,
@@ -912,7 +1250,9 @@ const TreeView = () => {
                   onAddFile: addFile,
                   onRename: renameNode,
                   editingNodeId: editingNodeId,
-                  setEditingNodeId: setEditingNodeId
+                  setEditingNodeId: setEditingNodeId,
+                  moveToTrash: moveToTrash,
+                  restoreFromTrash: restoreFromTrash
                 })
               )
             ),
