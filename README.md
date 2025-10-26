@@ -19,7 +19,7 @@ A modern, interactive file tree explorer built with vanilla React that leverages
 
 ## 🚀 Demo
 
-[Live Demo](https://manibpandian.github.io/file-tree-explorer/))
+[Live Demo](https://manibpandian.github.io/file-tree-explorer/)
 
 ## 📋 Prerequisites
 
