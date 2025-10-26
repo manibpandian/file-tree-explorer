@@ -42,7 +42,7 @@ A modern, interactive file tree explorer built with vanilla React that leverages
 git clone [https://github.com/your-username/file-tree-explorer.git](https://github.com/your-username/file-tree-explorer.git)
 cd file-tree-explorer
 
-# Serve with Python (if you have Python installed)
+# Serve with Python (if you have Python installed) 
 python -m http.server 8000
 # OR with Node.js
 npx serve .
